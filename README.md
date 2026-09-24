@@ -1,6 +1,6 @@
 # opencode-octopi
 
-[Octopi](https://github.com/rumisle/octopi) for OpenCode v2: an agent session leads **worker sessions** it can spawn on any model, prompt, steer, interrupt, queue, fork, compact, wait on, and kill.
+An OpenCode v2 plugin that lets an agent session lead **worker sessions** it can spawn on any model, prompt, steer, interrupt, queue, fork, compact, wait on, and kill.
 
 > ⚠️ **Read [TODO.md](TODO.md) first.** OpenCode's plugin API can't create child sessions yet, so workers are top-level sessions, not grouped under the leader. Fork and compact use OpenCode's HTTP API, and worker history is read from its SQLite database. Each workaround goes away when upstream exposes the capability.
 
