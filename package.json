@@ -1,0 +1,30 @@
+{
+  "name": "opencode-octopi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Octopi for OpenCode: lead worker sessions you can steer, interrupt, queue, fork and wait on",
+  "license": "MIT",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./tui": "./tui.js",
+    "./rpc": "./rpc.ts"
+  },
+  "scripts": {
+    "test": "bun test ./test/unit.test.ts",
+    "e2e": "bash test/e2e.sh",
+    "build-tui": "bun scripts/build-tui.ts"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.5.8",
+    "@opentui/solid": ">=0.5.8",
+    "solid-js": ">=1.9.0"
+  },
+  "devDependencies": {
+    "@babel/core": "7.28.0",
+    "@babel/preset-typescript": "7.27.1",
+    "babel-preset-solid": "1.9.12",
+    "@types/bun": "^1.4.2"
+  }
+}
