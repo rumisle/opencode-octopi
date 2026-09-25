@@ -3,8 +3,9 @@
 // The plugin API has no `session.fork` or `session.compact` yet (#48005, #49389), but the server's
 // HTTP API does. The plugin runs inside the server, so it calls it over loopback. It needs the
 // server's URL and password: from the `server` plugin option, else from the service registration
-// OpenCode writes in service mode ($XDG_STATE_HOME/opencode/service.json).
-import { existsSync, readFileSync } from "node:fs"
+// OpenCode writes in service mode ($XDG_STATE_HOME/opencode/service.json, or service-<channel>.json
+// for builds on another release channel).
+import { readdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
 
@@ -13,22 +14,26 @@ export interface ServerOptions {
   password?: string
 }
 
-export const serviceFile = () =>
-  path.join(process.env.XDG_STATE_HOME || path.join(homedir(), ".local/state"), "opencode", "service.json")
+export const stateDir = () => path.join(process.env.XDG_STATE_HOME || path.join(homedir(), ".local/state"), "opencode")
 
 /** The server to call, re-read on every use so a restarted service (new port) is picked up. */
 export function resolveServer(option?: ServerOptions): ServerOptions | undefined {
   if (option?.url) return option
-  const file = serviceFile()
-  if (!existsSync(file)) return undefined
+  let files: string[]
   try {
-    const info = JSON.parse(readFileSync(file, "utf8"))
-    if (typeof info.url !== "string") return undefined
-    if (typeof info.pid === "number" && info.pid !== process.pid) return undefined
-    return { url: info.url, password: typeof info.password === "string" ? info.password : undefined }
+    files = readdirSync(stateDir()).filter((name) => /^service(-.+)?\.json$/.test(name))
   } catch {
     return undefined
   }
+  // The registration written by the server this plugin runs in.
+  for (const name of files) {
+    try {
+      const info = JSON.parse(readFileSync(path.join(stateDir(), name), "utf8"))
+      if (typeof info.url !== "string" || info.pid !== process.pid) continue
+      return { url: info.url, password: typeof info.password === "string" ? info.password : undefined }
+    } catch {}
+  }
+  return undefined
 }
 
 export class HttpUnavailable extends Error {
