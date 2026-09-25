@@ -47,7 +47,8 @@ export class Roster {
     this.loaded = this.load()
   }
 
-  private async load() {
+  /** Read leader records from storage, skipping those `keep` says this copy owns (its memory is newer). */
+  private async load(keep: (leaderID: string) => boolean = () => false) {
     let after: string | undefined
     for (;;) {
       const page = await this.storage.scan({ prefix: "leader/", ...(after ? { after } : {}), limit: 500 })
@@ -55,6 +56,7 @@ export class Roster {
         const record = entry.value as LeaderRecord | undefined
         if (!record?.workers) continue
         const leaderID = entry.key.slice("leader/".length)
+        if (keep(leaderID)) continue
         this.leaders.set(leaderID, record)
         for (const worker of Object.values(record.workers))
           this.owners.set(worker.sessionID, { leaderID, name: worker.name })
@@ -62,6 +64,16 @@ export class Roster {
       if (!page.next) break
       after = page.next
     }
+  }
+
+  /**
+   * Pick up other plugin instances' changes (the server runs one per location, and a delegation
+   * tree can span locations). Leaders this instance manages keep their in-memory records.
+   */
+  async refresh(managed: (leaderID: string) => boolean) {
+    await this.loaded
+    await this.writes
+    await this.load(managed)
   }
 
   ready() {

@@ -92,8 +92,11 @@ export default {
     })
     octopi.onChange = (leaderID, notice) => {
       if (!rpc) return
-      void snapshot(leaderID, notice)
-        .then((snap) => rpc!.events.emit("update", snap))
+      // Only the instance that manages the leader reports its fleet (see Octopi.isLocal).
+      void octopi
+        .isLocal(leaderID)
+        .then((local) => (local ? snapshot(leaderID, notice) : undefined))
+        .then((snap) => snap && rpc!.events.emit("update", snap))
         .catch((error) => debug("rpc emit failed:", String(error)))
     }
     try {
@@ -110,6 +113,7 @@ export default {
       async (input: any, context: any): Promise<{ output: unknown; content: string; metadata?: Record<string, unknown> }> => {
         const leaderID: string = context.sessionID
         if (!octopi.isLeader(leaderID)) throw new Error("octopi: this session is a leaf worker and cannot lead workers")
+        octopi.markLocal(leaderID)
         // The workers a call is about, as metadata.sessionIDs: the web app shows a card per
         // worker under the call (patch core/codemode-child-sessions), like the subagent tool's.
         const named = (value: any): unknown[] => (typeof value?.name === "string" ? [value.name] : [])

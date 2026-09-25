@@ -105,6 +105,21 @@ restart_server
 out=$(lead_in $RL 'return await tools.octopi.wait({timeoutSec: 60})')
 check "the roster survives and the resumed turn's result arrives" "$(result "$out")" '.finished[0].name == "r" and .finished[0].outcome == "succeeded"'
 
+echo "== one plugin instance per location: a worker is resumed once, by its leader's"
+out=$(lead restart2 'return await tools.octopi.spawn({name: "r2", prompt: "SLEEP 6 REPLY survived again"})')
+RL2=$(leader "$out"); W2=$(result "$out" | jq -r '.sessionID'); sleep 1.5
+restart_server
+# Boot a second location at the same moment as the leader's: before the fix both instances swept
+# every leader's workers and could resume this one twice.
+mkdir -p $E/work2
+S2=$(A post /api/session -d "$(jq -nc --arg d $E/work2 '{title:"other", model:{id:"claude-opus-5-5",providerID:"anthropic"}, location:{directory:$d}}')" | jq -r '.data.id // .id')
+A post "/api/session/$S2/prompt" -d '{"text":"REPLY hi"}' >/dev/null &
+out=$(lead_in $RL2 'return await tools.octopi.wait({timeoutSec: 60})')
+wait
+resumed=$(A get "/api/session/$W2/message?limit=100&order=asc" | jq '{n: [.data[] | select(.type=="synthetic" and (.text | test("server restarted")))] | length}')
+check "the resumed turn's result arrives" "$(result "$out")" '.finished[0].name == "r2" and .finished[0].outcome == "succeeded"'
+check "it was resumed exactly once" "$resumed" '.n == 1'
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

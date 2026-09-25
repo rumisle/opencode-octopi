@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { lastPromptTokens, type Row, stoppedTurn, transcript, turns } from "../src/history.ts"
-import { Activity, formatModel, parseModel } from "../src/octopi.ts"
+import { Activity, formatModel, Octopi, parseModel } from "../src/octopi.ts"
 import { Roster } from "../src/roster.ts"
 
 let seq = 0
@@ -127,5 +127,50 @@ describe("Activity", () => {
     expect(await idle.isBusy("x")).toBe(false)
     const busy = new Activity(() => new Promise(() => {}))
     expect(await busy.isBusy("y")).toBe(true)
+  })
+})
+
+// The server runs one plugin instance per location and sends each every location's events.
+describe("one instance per location", () => {
+  test("stoppedTurn ignores plugin notices after the marker", () => {
+    expect(stoppedTurn([user("a"), idle(), row("notice", { text: "Cache kept warm" })])).toBeUndefined()
+  })
+
+  test("roster refresh picks up other instances' leaders and keeps its own", async () => {
+    const storage = memoryStorage()
+    const a = new Roster(storage)
+    const b = new Roster(storage)
+    await Promise.all([a.ready(), b.ready()])
+    await a.add({ name: "x", sessionID: "X", leaderID: "LA", spawner: true, createdAt: 1 })
+    await b.add({ name: "y", sessionID: "Y", leaderID: "X", spawner: false, createdAt: 2 })
+    expect(a.descendants("LA").map((w) => w.name)).toEqual(["x"])
+    await a.update("LA", "x", (w) => (w.consumed = "newer"))
+    await a.refresh((leaderID) => leaderID === "LA")
+    expect(a.descendants("LA").map((w) => w.name).sort()).toEqual(["x", "y"])
+    expect(a.get("LA", "x")?.consumed).toBe("newer")
+  })
+
+  test("only the leader's location resumes its stopped workers", async () => {
+    const storage = memoryStorage()
+    const seed = new Roster(storage)
+    await seed.ready()
+    await seed.add({ name: "here", sessionID: "W1", leaderID: "L1", spawner: false, createdAt: 1 })
+    await seed.add({ name: "there", sessionID: "W2", leaderID: "L2", spawner: false, createdAt: 2 })
+    const resumed: string[] = []
+    const where: Record<string, string> = { L1: "/a", L2: "/b", W1: "/a", W2: "/b" }
+    const ctx = {
+      location: { directory: "/a" },
+      storage,
+      session: {
+        get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, parentID: "p", location: { directory: where[sessionID] } }),
+        synthetic: async ({ sessionID }: { sessionID: string }) => void resumed.push(sessionID),
+        wait: async () => {},
+      },
+    }
+    const stopped = [user("go"), assistant("half way")]
+    const octopi = new Octopi(ctx, { rows: () => stopped })
+    await octopi.resumeStopped()
+    expect(resumed).toEqual(["W1"])
+    expect(await octopi.isLocal("L2")).toBe(false)
   })
 })

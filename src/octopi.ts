@@ -177,6 +177,44 @@ export class Octopi {
   readonly activity: Activity
   private readonly options: Required<Pick<Options, "waitTimeoutSec" | "maxRunning">> & Options
   private modelCache?: { at: number; models: any[] }
+  /**
+   * The server runs one instance of this plugin per location (directory) and sends each every
+   * location's events. A leader is managed by the instance of its session's location: that one
+   * runs its tools, reports its fleet and resumes its workers after a restart.
+   */
+  private locality = new Map<string, Promise<boolean>>()
+  private managed = new Set<string>()
+  isLocal(leaderID: string): Promise<boolean> {
+    const here = this.ctx.location
+    if (!here?.directory) return Promise.resolve(true)
+    let known = this.locality.get(leaderID)
+    if (!known) {
+      const lookup: Promise<boolean> = this.ctx.session.get({ sessionID: leaderID }).then(
+        (info: any) => {
+          const at = info?.location
+          const local = !!at && at.directory === here.directory && (at.workspaceID ?? undefined) === (here.workspaceID ?? undefined)
+          if (local) this.managed.add(leaderID)
+          return local
+        },
+        () => {
+          this.locality.delete(leaderID)
+          return false
+        },
+      )
+      this.locality.set(leaderID, lookup)
+      known = lookup
+    }
+    return known
+  }
+  /** A tool call for this leader runs here, so it is local. */
+  markLocal(leaderID: string) {
+    this.managed.add(leaderID)
+    this.locality.set(leaderID, Promise.resolve(true))
+  }
+  private refreshRoster() {
+    return this.roster.refresh((leaderID) => this.managed.has(leaderID))
+  }
+
   /** Called whenever a leader's fleet may have changed (for the TUI). */
   onChange: (leaderID: string, notice?: string) => void = () => {}
 
@@ -201,6 +239,10 @@ export class Octopi {
 
   onEvent(event: any) {
     this.activity.onEvent(event)
+    if (event?.type === "session.moved" && event.data?.sessionID) {
+      this.locality.delete(event.data.sessionID)
+      this.managed.delete(event.data.sessionID)
+    }
     const worker = event?.data?.sessionID ? this.roster.worker(event.data.sessionID) : undefined
     if (!worker) return
     if (event.type === "session.execution.started") this.onChange(worker.leaderID)
@@ -266,6 +308,7 @@ export class Octopi {
 
   /** Running workers in the tree `sessionID` belongs to. */
   async running(sessionID: string) {
+    await this.refreshRoster()
     const all = this.roster.descendants(this.roster.root(sessionID))
     const busy = await Promise.all(all.map((w) => this.activity.isBusy(w.sessionID)))
     return all.filter((_, i) => busy[i])
@@ -386,7 +429,7 @@ export class Octopi {
   }
 
   async fleet(leaderID: string): Promise<Fleet> {
-    await this.roster.ready()
+    await this.refreshRoster()
     const workers = await Promise.all(this.roster.workers(leaderID).map((w) => this.fleetRow(w)))
     const root = this.roster.root(leaderID)
     const tree = this.roster.descendants(root)
@@ -423,6 +466,7 @@ export class Octopi {
     await this.roster.ready()
     for (const worker of this.roster.all()) {
       if (worker.closedAt) continue
+      if (!(await this.isLocal(worker.leaderID))) continue
       const stopped = stoppedTurn(this.history.rows(worker.sessionID))
       if (!stopped || stopped.id === worker.consumed) continue
       const info: any = await this.ctx.session.get({ sessionID: worker.sessionID }).catch(() => undefined)
