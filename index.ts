@@ -107,9 +107,12 @@ export default {
     // ── tools ──
     const run =
       (name: keyof typeof TOOLS) =>
-      async (input: any, context: any): Promise<{ output: unknown; content: string }> => {
+      async (input: any, context: any): Promise<{ output: unknown; content: string; metadata?: Record<string, unknown> }> => {
         const leaderID: string = context.sessionID
         if (!octopi.isLeader(leaderID)) throw new Error("octopi: this session is a leaf worker and cannot lead workers")
+        // The workers a call is about, as metadata.sessionIDs: the web app shows a card per
+        // worker under the call (patch core/codemode-child-sessions), like the subagent tool's.
+        const named = (value: any): unknown[] => (typeof value?.name === "string" ? [value.name] : [])
         try {
           const output =
             name === "spawn"
@@ -125,7 +128,11 @@ export default {
                       : name === "compact"
                         ? await octopi.compact(leaderID, input)
                         : await octopi.kill(leaderID, input)
-          return { output, content: JSON.stringify(output, null, 2) }
+          // wait: the workers whose results it returned; list: none (it is about all of them).
+          const finished = Array.isArray((output as any)?.finished) ? (output as any).finished.map((c: any) => c?.name) : []
+          const about = name === "wait" ? finished : name === "list" ? [] : [...named(input), ...named(output)]
+          const sessionIDs = octopi.sessionIDs(leaderID, about)
+          return { output, content: JSON.stringify(output, null, 2), ...(sessionIDs.length ? { metadata: { sessionIDs } } : {}) }
         } catch (error) {
           if (error instanceof ToolError) throw new Error(`octopi ${name}: ${error.message}`)
           debug(name, "failed:", error)

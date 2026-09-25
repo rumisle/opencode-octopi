@@ -36,6 +36,11 @@ info=$(A get "/api/session/$WA" | jq --arg l "$L" '.data // . | {child: (.parent
 echo "     worker session: $(jq -c . <<<"$info")"
 check "a worker is a child of its leader, or a prefixed top-level session" "$info" '(.child and .title == "a · SLEEP 1 REPLY hello") or (.top and .title == "octopi · a · SLEEP 1 REPLY hello")'
 [ -n "${CHILDREN:-}" ] && check "workers are child sessions: $CHILDREN" "$info" "(.child | if . then 1 else 0 end) == $CHILDREN"
+# The Code Mode rows name the workers each call drove (metadata.sessionIDs, forwarded by ocelot's
+# core/codemode-child-sessions); the web app shows a card per worker from them. CARDS=1 asserts it.
+rows=$(A get "/api/session/$L/message?limit=20&order=desc&type=assistant" | jq '[.data[].content[] | select(.type=="tool" and .name=="execute") | .state.metadata.toolCalls[]? | {tool, ids: (.sessionIDs // [])}]')
+echo "     execute rows: $(jq -c . <<<"$rows")"
+[ -n "${CARDS:-}" ] && check "spawn and wait rows carry the worker's session" "$rows" "map(select(.tool == \"octopi.spawn\" or .tool == \"octopi.wait\") | .ids == [\"$WA\"]) | length == 2 and all"
 out=$(lead_in $L 'return await tools.octopi.wait({})')
 check "a reported result is not reported again; wait is idle" "$(result "$out")" '.idle == true'
 

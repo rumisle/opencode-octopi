@@ -250,6 +250,14 @@ export class Octopi {
     return worker
   }
 
+  /** Session IDs of the named workers (all open ones when names is undefined); unknown names are skipped. */
+  sessionIDs(leaderID: string, names?: unknown[]): string[] {
+    const workers = names
+      ? names.flatMap((name) => (typeof name === "string" ? [this.roster.get(leaderID, name)] : []))
+      : this.roster.workers(leaderID).filter((w) => !w.closedAt)
+    return [...new Set(workers.flatMap((w) => (w ? [w.sessionID] : [])))]
+  }
+
   private open(leaderID: string, name: unknown): Worker {
     const worker = this.worker(leaderID, name)
     if (worker.closedAt) throw new ToolError(`Worker "${worker.name}" was killed and accepts no more messages.`)
