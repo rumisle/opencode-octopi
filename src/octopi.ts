@@ -29,6 +29,11 @@ const unwrap = <T>(value: any): T => (value && typeof value === "object" && "dat
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$/
 const LEAF_PERMISSIONS = [{ action: `${P.NAMESPACE}_*`, resource: "*", effect: "deny" as const }]
 
+// Workers are child sessions where the server supports it (ocelot's core/child-sessions patch, or upstream once it
+// lands): grouped under their parent in the UI. Stock OpenCode ignores the request and makes a top-level session,
+// which gets a prefix so workers stand out in the session list.
+const childTitle = (session: { parentID?: string }, title: string) => (session.parentID ? title : `octopi · ${title}`)
+
 export function parseModel(value: string): ModelRef {
   const [path, variant] = value.split("#", 2)
   const slash = path!.indexOf("/")
@@ -327,6 +332,7 @@ export class Octopi {
 
   /** Newly finished turns of `worker` since the last report, if it is idle now. */
   private async completion(worker: Worker): Promise<Completion | undefined> {
+    await this.recovery
     if (await this.activity.isBusy(worker.sessionID)) return undefined
     const all = this.results(this.history.rows(worker.sessionID), false)
     const last = all.at(-1)
@@ -348,6 +354,7 @@ export class Octopi {
   }
 
   private async fleetRow(worker: Worker): Promise<FleetRow> {
+    await this.recovery
     const [info, busy] = await Promise.all([
       this.ctx.session.get({ sessionID: worker.sessionID }).catch(() => undefined),
       this.activity.isBusy(worker.sessionID),
@@ -388,6 +395,42 @@ export class Octopi {
     }
   }
 
+  /**
+   * Continue workers whose turn a server restart cut off. The server resumes interrupted top-level sessions itself,
+   * but a child session only through the subagent job that owns it, so child workers are left stopped; octopi owns
+   * them. Skips turns already reported to the leader (it knows they stopped) and closed workers.
+   */
+  resumeStopped(log: (...args: unknown[]) => void = () => {}) {
+    // Let setup finish first; results are held back until the sweep is done, so a leader never sees a turn as stopped
+    // that is about to continue.
+    this.recovery = sleep(500)
+      .then(() => this.sweepStopped(log))
+      .catch((error) => log("resume sweep failed:", String(error)))
+    return this.recovery
+  }
+
+  private recovery: Promise<void> = Promise.resolve()
+
+  private async sweepStopped(log: (...args: unknown[]) => void) {
+    await this.roster.ready()
+    for (const worker of this.roster.all()) {
+      if (worker.closedAt) continue
+      const stopped = stoppedTurn(this.history.rows(worker.sessionID))
+      if (!stopped || stopped.id === worker.consumed) continue
+      const info: any = await this.ctx.session.get({ sessionID: worker.sessionID }).catch(() => undefined)
+      if (!info?.parentID || (await this.activity.isBusy(worker.sessionID))) continue
+      log("resuming", worker.name, worker.sessionID)
+      this.activity.mark(worker.sessionID)
+      try {
+        await this.ctx.session.synthetic({ sessionID: worker.sessionID, text: P.RESUMED, resume: true })
+        this.onChange(worker.leaderID)
+      } catch (error) {
+        this.activity.unmark(worker.sessionID)
+        log("resume failed:", worker.name, String(error))
+      }
+    }
+  }
+
   // ── tools ──────────────────────────────────────────────────────────────────
 
   async spawn(leaderID: string, input: any) {
@@ -401,7 +444,7 @@ export class Octopi {
     const model = await this.resolveModel(input.model, leaderID)
     const leader = await this.ctx.session.get({ sessionID: leaderID })
     const task = String(input.task ?? input.prompt ?? "").replace(/\s+/g, " ").trim().slice(0, 60) || "worker"
-    const title = `octopi · ${name} · ${task}`
+    const title = `${name} · ${task}`
     const permissions = spawner ? [] : LEAF_PERMISSIONS
     const prompt = typeof input.prompt === "string" && input.prompt.trim() ? input.prompt : undefined
     // Reserve a slot before creating anything, so a full tree refuses cleanly.
@@ -428,7 +471,7 @@ export class Octopi {
       const source = from === "self" || from === undefined ? leaderID : this.worker(leaderID, from).sessionID
       session = await forkSession(this.options.server, source, input.fork.before)
       if (!session?.id) throw new ToolError("fork returned no session")
-      await this.ctx.session.update({ sessionID: session.id, title, permissions })
+      await this.ctx.session.update({ sessionID: session.id, title: childTitle(session, title), permissions })
       if (input.model !== undefined && model) await this.ctx.session.switchModel({ sessionID: session.id, model })
       forkedFrom = source
       // The copied history's finished turns are not this worker's results.
@@ -440,8 +483,11 @@ export class Octopi {
         ...(model ? { model } : {}),
         metadata: { octopi: { leaderID, name } },
         permissions,
+        // Servers without child sessions ignore parentID; the location keeps the worker beside its leader there.
+        parentID: leaderID,
         location: input.directory ? { directory: String(input.directory) } : leader?.location,
       })
+      if (!session.parentID) await this.ctx.session.update({ sessionID: session.id, title: childTitle(session, title) })
     }
 
     const worker: Worker = {

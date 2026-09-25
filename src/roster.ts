@@ -76,6 +76,11 @@ export class Roster {
     return this.writes
   }
 
+  /** Every worker of every leader. */
+  all(): Worker[] {
+    return [...this.leaders.values()].flatMap((record) => Object.values(record.workers))
+  }
+
   workers(leaderID: string): Worker[] {
     return Object.values(this.leaders.get(leaderID)?.workers ?? {}).sort((a, b) => a.createdAt - b.createdAt)
   }

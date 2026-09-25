@@ -29,6 +29,13 @@ out=$(lead basic 'const s = await tools.octopi.spawn({name: "a", prompt: "SLEEP 
 check "spawn prompts the worker" "$(result "$out")" '.s.prompted == true and .s.name == "a"'
 check "wait returns its final message" "$(result "$out")" '.w.finished[0].text == "hello" and .w.finished[0].outcome == "succeeded"'
 L=$(leader "$out")
+# Workers are child sessions of their leader where the server supports it (ocelot), else prefixed top-level sessions.
+# CHILDREN=1 or 0 asserts which; unset, the run only checks the two are consistent.
+WA=$(result "$out" | jq -r '.s.sessionID')
+info=$(A get "/api/session/$WA" | jq --arg l "$L" '.data // . | {child: (.parentID == $l), top: (.parentID == null), title}')
+echo "     worker session: $(jq -c . <<<"$info")"
+check "a worker is a child of its leader, or a prefixed top-level session" "$info" '(.child and .title == "a · SLEEP 1 REPLY hello") or (.top and .title == "octopi · a · SLEEP 1 REPLY hello")'
+[ -n "${CHILDREN:-}" ] && check "workers are child sessions: $CHILDREN" "$info" "(.child | if . then 1 else 0 end) == $CHILDREN"
 out=$(lead_in $L 'return await tools.octopi.wait({})')
 check "a reported result is not reported again; wait is idle" "$(result "$out")" '.idle == true'
 
@@ -67,9 +74,13 @@ check "spawner workers get both" "$reqs" '[.[] | select(.worker and (.newest | t
 check "leaders get the blurb" "$reqs" '[.[] | select(.worker | not) | select(.newest | test("CODE:"))] | all(.blurb)'
 
 echo "== fork"
-out=$(lead_in $L 'const f = await tools.octopi.spawn({name: "fs", fork: {from: "self"}, prompt: "REPLY forked self"}); const g = await tools.octopi.spawn({name: "fa", fork: {from: "a"}, prompt: "REPLY forked a"}); const w = []; while (w.length < 2) w.push(...(await tools.octopi.wait({names: ["fs", "fa"]})).finished); return {f, w: w.map(x => x.name + ":" + x.text).sort()}')
+out=$(lead_in $L 'const f = await tools.octopi.spawn({name: "fs", fork: {from: "self"}, prompt: "REPLY forked self"}); const g = await tools.octopi.spawn({name: "fa", fork: {from: "a"}, prompt: "REPLY forked a"}); const w = []; while (w.length < 2) w.push(...(await tools.octopi.wait({names: ["fs", "fa"]})).finished); return {f, g, w: w.map(x => x.name + ":" + x.text).sort()}')
 check "fork self and fork a worker; copied turns are not reported" "$(result "$out")" '.f.forkedFrom == "self" and .w == ["fa:forked a", "fs:forked self"]'
-FA=$(A get /api/session | jq -r '.data[] | select(.title | test("octopi · fa")) | .id')
+FS=$(result "$out" | jq -r '.f.sessionID')
+FA=$(result "$out" | jq -r '.g.sessionID')
+forks=$(jq -n --argjson fs "$(A get "/api/session/$FS" | jq '.data // .')" --argjson fa "$(A get "/api/session/$FA" | jq '.data // .')" --arg l "$L" --arg a "$WA" '{fs: {child: ($fs.parentID == $l), top: ($fs.parentID == null), title: $fs.title}, fa: {child: ($fa.parentID == $a), top: ($fa.parentID == null), title: $fa.title}}')
+check "a fork is a child of its source, or a prefixed top-level session" "$forks" '[.fs, .fa] | all((.child and (.title | startswith("octopi") | not)) or (.top and (.title | startswith("octopi · "))))'
+[ -n "${CHILDREN:-}" ] && check "forks are child sessions: $CHILDREN" "$forks" "[.fs, .fa] | map(.child | if . then 1 else 0 end) | all(. == $CHILDREN)"
 hist=$(A get "/api/session/$FA/message?limit=50" | jq '[.data[] | select(.type == "user") | .text]')
 check "a forked worker has the source's history and a fork preamble" "$hist" 'any(test("REPLY hello")) and any(test("a fork of worker \"a\""))'
 

@@ -23,7 +23,8 @@ S=agent-octopie2e-$(openssl rand -hex 3)
 if [ -n "${SERVICE:-}" ]; then
   SERVER_OPTION=""
   SERVE="serve --service"
-  echo "{\"port\": $PORT, \"password\": \"test\"}" > $E/config/opencode/service.json
+  # Builds on another release channel (ocelot) read service-<channel>.json instead.
+  for f in service.json service-ocelot.json; do echo "{\"port\": $PORT, \"password\": \"test\"}" > $E/config/opencode/$f; done
 else
   SERVER_OPTION=", \"server\": { \"url\": \"http://127.0.0.1:$PORT\", \"password\": \"test\" }"
   SERVE="serve --port $PORT"

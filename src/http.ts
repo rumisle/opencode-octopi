@@ -62,8 +62,9 @@ export async function call(option: ServerOptions | undefined, method: string, ro
   return json?.data ?? json
 }
 
+// `child` makes the copy a child of its source where supported; other servers ignore it.
 export const forkSession = (server: ServerOptions | undefined, sessionID: string, before?: string) =>
-  call(server, "POST", `/api/session/${encodeURIComponent(sessionID)}/fork`, before ? { before } : {})
+  call(server, "POST", `/api/session/${encodeURIComponent(sessionID)}/fork`, { ...(before ? { before } : {}), child: true })
 
 export const compactSession = (server: ServerOptions | undefined, sessionID: string, delivery: "steer" | "queue") =>
   call(server, "POST", `/api/session/${encodeURIComponent(sessionID)}/compact`, { delivery })

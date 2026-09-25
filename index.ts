@@ -81,6 +81,8 @@ export default {
     }
     const octopi = new Octopi(ctx, sqliteHistory(options.database), options)
     await octopi.roster.ready().catch((error) => debug("roster load failed:", String(error)))
+    // Continue workers a server restart cut off.
+    void octopi.resumeStopped(debug)
 
     // ── TUI sidebar: fleet snapshots over RPC ──
     let rpc: { events: { emit: (name: "update", data: any) => Promise<void> } } | undefined

@@ -65,3 +65,6 @@ export const workerPreamble = (name: string, spawner: boolean, forkOf?: string) 
     "Your leader may steer or interrupt you with new messages mid-task.",
     ...(spawner ? ["You may lead workers of your own with the octopi tools."] : []),
   ].join(" ")
+
+export const RESUMED =
+  "[octopi] The server restarted while you were working, which cut off your turn. Continue your task where you left off; your leader is still waiting for your report."

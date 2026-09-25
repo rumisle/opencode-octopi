@@ -2,7 +2,7 @@
 
 An OpenCode v2 plugin that lets an agent session lead **worker sessions** it can spawn on any model, prompt, steer, interrupt, queue, fork, compact, wait on, and kill.
 
-> ⚠️ **Read [TODO.md](TODO.md) first.** OpenCode's plugin API can't create child sessions yet, so workers are top-level sessions, not grouped under the leader. Fork and compact use OpenCode's HTTP API, and worker history is read from its SQLite database. Each workaround goes away when upstream exposes the capability.
+> ⚠️ **Read [TODO.md](TODO.md) first.** Stock OpenCode can't create child sessions yet, so there workers are top-level sessions titled `octopi · name · task`; on [ocelot](https://github.com/rumisle/ocelot) they are children of their leader. Fork and compact use OpenCode's HTTP API, and worker history is read from its SQLite database. Each workaround goes away when upstream exposes the capability.
 
 ## Why not OpenCode's `subagent` tool
 
@@ -55,7 +55,7 @@ All in Code Mode as `tools.octopi.*` (permission names `octopi_*`).
 
 Workers are leaves by default: a session permission denies `octopi_*`, which removes the tools entirely, and they don't get the octopi system-prompt blurb. Leaders (every other session) do.
 
-Restarts: the roster lives in OpenCode's plugin storage. A service-mode OpenCode resumes turns interrupted by a restart, and `wait` reports them when they finish; a turn that stopped without being resumed is reported as `interrupted`.
+Restarts: the roster lives in OpenCode's plugin storage. A service-mode OpenCode resumes top-level sessions a restart interrupted, but not child sessions, so octopi resumes child workers itself at startup (with a note that the server restarted). `wait` reports them when they finish; a turn that stopped without being resumed is reported as `interrupted`.
 
 ## Development
 
